@@ -76,6 +76,7 @@ get_existing_api_secret() {
         $0 ~ name {flag=1; next}
         flag && /API_SECRET:/ {
             match($0, /API_SECRET: *([^ ]+)/, arr)
+            gsub(/^["\047]|["\047]$/, "", arr[1])  # Remove leading/trailing quotes
             print arr[1]
             exit
         }
@@ -86,64 +87,6 @@ get_existing_api_secret() {
 get_existing_hostname() {
     local instance_name=$1
     [[ -f docker-compose.yml ]] && grep -A5 "nightscout_$instance_name:" docker-compose.yml | grep "traefik.http.routers" | sed -E "s/.*Host\(\`([^']+)\`\).*/\1/" || echo ""
-}
-
-# Function to add a Nightscout instance to docker-compose.yml
-add_nightscout_instance() {
-    local ns_name=$1
-    local ns_hostname=$2
-    local api_secret=$3
-
-    # Check if the instance already exists
-    if grep -q "nightscout_$ns_name:" docker-compose.yml; then
-        # Update existing instance
-        sed -i "/nightscout_$ns_name:/,/^$/c\
-  nightscout_$ns_name:\n\
-    image: nightscout/cgm-remote-monitor:latest\n\
-    container_name: nightscout_$ns_name\n\
-    restart: always\n\
-    depends_on:\n\
-      - mongo\n\
-    labels:\n\
-      - 'traefik.enable=true'\n\
-      - 'traefik.http.routers.nightscout_$ns_name.rule=Host(\`$ns_hostname\`)'\n\
-      - 'traefik.http.routers.nightscout_$ns_name.entrypoints=websecure'\n\
-      - 'traefik.http.routers.nightscout_$ns_name.tls.certresolver=le'\n\
-    logging: *default-logging\n\
-    environment:\n\
-      NODE_ENV: production\n\
-      TZ: Etc/UTC\n\
-      INSECURE_USE_HTTP: 'true'\n\
-      MONGO_CONNECTION: mongodb://mongo:27017/$ns_name\n\
-      API_SECRET: $api_secret\n\
-      ENABLE: careportal cage basal iob sage treatmentnotify rawbg alexa cors basalprofile pushover bgi loop iage cob food direction speech bage upbat googlehome errorcodes openaps pump reservoir battery clock status device openapsbasal status-symbol status-label meal-assist freq rssi override ar2 ar2_cone_factor\n\
-      AUTH_DEFAULT_ROLES: denied\n" docker-compose.yml
-    else
-        # Add new instance
-        cat << EOF >> docker-compose.yml
-  nightscout_$ns_name:
-    image: nightscout/cgm-remote-monitor:latest
-    container_name: nightscout_$ns_name
-    restart: always
-    depends_on:
-      - mongo
-    labels:
-      - 'traefik.enable=true'
-      - 'traefik.http.routers.nightscout_$ns_name.rule=Host(\`$ns_hostname\`)'
-      - 'traefik.http.routers.nightscout_$ns_name.entrypoints=websecure'
-      - 'traefik.http.routers.nightscout_$ns_name.tls.certresolver=le'
-    logging: *default-logging
-    environment:
-      NODE_ENV: production
-      TZ: Etc/UTC
-      INSECURE_USE_HTTP: 'true'
-      MONGO_CONNECTION: mongodb://mongo:27017/$ns_name
-      API_SECRET: $api_secret
-      ENABLE: careportal cage basal iob sage treatmentnotify rawbg alexa cors basalprofile pushover bgi loop iage cob food direction speech bage upbat googlehome errorcodes openaps pump reservoir battery clock status device openapsbasal status-symbol status-label meal-assist freq rssi override ar2 ar2_cone_factor
-      AUTH_DEFAULT_ROLES: denied
-
-EOF
-    fi
 }
 
 # Ask for the user's email address
@@ -227,18 +170,28 @@ done
 
 # Generate docker-compose.yml at the end
 generate_docker_compose() {
-    # Preserve existing content
-    if [ -f docker-compose.yml ]; then
-        cp docker-compose.yml docker-compose.yml.bak
-    fi
-
-    # Create or update the header
+    # Create the initial structure with common configurations
     cat << EOF > docker-compose.yml
+version: '3'
+
 x-logging: &default-logging
   options:
     max-size: '10m'
     max-file: '5'
   driver: json-file
+
+x-nightscout-common: &nightscout-common
+  image: nightscout/cgm-remote-monitor:latest
+  restart: always
+  depends_on:
+    - mongo
+  logging: *default-logging
+  environment: &nightscout-env
+    NODE_ENV: production
+    TZ: Etc/UTC
+    INSECURE_USE_HTTP: 'true'
+    ENABLE: careportal cage basal iob sage treatmentnotify rawbg alexa cors basalprofile pushover bgi loop iage cob food direction speech bage upbat googlehome errorcodes openaps pump reservoir battery clock status device openapsbasal status-symbol status-label meal-assist freq rssi override ar2 ar2_cone_factor
+    AUTH_DEFAULT_ROLES: denied
 
 services:
   mongo:
@@ -249,15 +202,28 @@ services:
 
 EOF
 
-    # Add or update Nightscout instances
+    # Add Nightscout instances
     for instance in "${nightscout_instances[@]}"; do
         IFS=':' read -r ns_name ns_hostname api_secret <<< "$instance"
-        add_nightscout_instance "$ns_name" "$ns_hostname" "$api_secret"
+        cat << EOF >> docker-compose.yml
+  nightscout_$ns_name:
+    <<: *nightscout-common
+    container_name: nightscout_$ns_name
+    labels:
+      - 'traefik.enable=true'
+      - 'traefik.http.routers.nightscout_$ns_name.rule=Host(\`$ns_hostname\`)'
+      - 'traefik.http.routers.nightscout_$ns_name.entrypoints=websecure'
+      - 'traefik.http.routers.nightscout_$ns_name.tls.certresolver=le'
+    environment:
+      <<: *nightscout-env
+      MONGO_CONNECTION: mongodb://mongo:27017/$ns_name
+      API_SECRET: $api_secret
+
+EOF
     done
 
-    # Add or update Traefik service
+    # Add Traefik service
     cat << EOF >> docker-compose.yml
-
   traefik:
     image: traefik:latest
     container_name: 'traefik'
@@ -280,17 +246,11 @@ EOF
       - '/var/run/docker.sock:/var/run/docker.sock:ro'
     logging: *default-logging
 EOF
-
-    # Preserve any additional content from the original file
-    if [ -f docker-compose.yml.bak ]; then
-        awk '/^  traefik:/,/^$/ {f=1} f && /^$/ {exit} !f' docker-compose.yml.bak | tail -n +2 >> docker-compose.yml
-        rm docker-compose.yml.bak
-    fi
 }
 
 # Generate the docker-compose.yml file
 generate_docker_compose
 
 # Recreate Docker services
-sudo docker compose down -v --remove-orphans
+sudo docker compose down
 sudo docker compose up -d

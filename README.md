@@ -30,11 +30,12 @@ Nightscout is a powerful tool for diabetes management that:
 
 3. **Install Nightscout:**
 
+   - Connect to your VPS using SSH (ssh root@you.nightscout.top)
+   - Run the following command to install/setup your instance(s):
+
    ```
    curl -sSL https://raw.githubusercontent.com/mluggy/nightscout-vps/main/setup.sh | sudo bash
    ```
-
-   Follow the prompts to set up your instance(s)
 
 4. **Access Nightscout:**
    - Visit `https://you.nightscout.top` and use your API secret to log in
@@ -45,6 +46,7 @@ Nightscout is a powerful tool for diabetes management that:
 - Your API secret should only be used by your DIY loop
 - Followers should use "readable" only tokens
 - Email is required for SSL certificates
+- If you want to shut down your instance, click "Destroy" in the DigitalOcean control panel
 
 ## Free Hostname Terms
 
@@ -52,4 +54,4 @@ Free hostnames are provided as a courtesy. They may be revoked at any time and a
 
 ## Disclaimer
 
-This script is provided as-is. The author is not responsible for Nightscout, the VPS, installation issues, or any medical treatment/health outcomes. Always consult your healthcare provider for medical advice.
+This script is provided as-is. The author is not responsible for Nightscout, the VPS, its billing and availability and/oor any installation issues. The author is certainly not responsible for any medical treatment/health outcomes. Always consult your healthcare provider for medical advice.
